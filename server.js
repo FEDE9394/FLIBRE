@@ -350,8 +350,8 @@ function localUrl(request, path) {
   return `${proto}://${host}${path}`;
 }
 
-function meta(id, type, name, poster = '') {
-  return { id, type, name, ...(poster ? { poster } : {}) };
+function meta(id, type, name) {
+  return { id, type, name };
 }
 
 async function router(request, response) {
