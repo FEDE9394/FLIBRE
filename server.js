@@ -194,7 +194,7 @@ function wrapWords(title, maxCharsPerLine = 14, maxLines = 4) {
   }
   if (line && lines.length < maxLines) lines.push(line.trim());
   if (lines.length === maxLines && words.join(' ').length > lines.join(' ').length) {
-    lines[maxLines - 1] = lines[maxLines - 1].slice(0, maxCharsPerLine - 1).trimEnd() + '…';
+    lines[maxLines - 1] = lines[maxLines - 1].slice(0, maxCharsPerLine - 1).trimEnd() + '...';
   }
   return lines;
 }
@@ -211,8 +211,6 @@ function posterSvg(title) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" viewBox="0 0 400 600">
   <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${bg}"/><stop offset="100%" stop-color="#000000"/></linearGradient></defs>
   <rect width="400" height="600" fill="url(#g)"/>
-  <circle cx="200" cy="140" r="60" fill="rgba(255,255,255,0.12)"/>
-  <path d="M200 95 L238 122 L224 166 L176 166 L162 122 Z" fill="rgba(255,255,255,0.35)"/>
   ${textElements}
 </svg>`;
 }
