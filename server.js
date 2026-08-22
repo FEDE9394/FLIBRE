@@ -378,6 +378,77 @@ function formatTitle(originalTitle, time = '') {
   return `${prefix}${match}`.slice(0, prefix.length + available).trimEnd();
 }
 
+const DEFAULT_POSTER = 'https://placehold.co/400x600/0f172a/fbbf24/png?text=Futbol+Libre';
+const sportsDbPosterCache = new Map();
+const TEAM_SUFFIXES = /\b(?:fc|f\.c\.|club|s\.a\.d\.|sad|cf|c\.f\.)\b/gi;
+
+function cleanTeamName(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(TEAM_SUFFIXES, ' ')
+    .replace(/[^a-z0-9 ]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function teamTokens(value) {
+  return new Set(cleanTeamName(value).split(' ').filter(token => token.length > 1));
+}
+
+function extractTeams(title) {
+  const withoutTime = String(title || '').replace(/^\[[^\]]+\]\s*/, '');
+  const withoutCompetition = withoutTime.replace(TOURNAMENT_WORDS, '').replace(/\s+/g, ' ').trim();
+  const parts = withoutCompetition.split(/\s+(?:vs\.?|v\.?|contra|at|@)\s+|\s+-\s+/i)
+    .map(part => part.trim())
+    .filter(Boolean);
+  return parts.length >= 2 ? [parts[0], parts[1]] : [];
+}
+
+function eventMatchScore(eventName, teamA, teamB) {
+  const eventTokens = teamTokens(eventName);
+  const expected = [...teamTokens(teamA), ...teamTokens(teamB)];
+  if (!expected.length) return 0;
+  const matched = expected.filter(token => [...eventTokens].some(candidate => candidate === token || candidate.includes(token) || token.includes(candidate)));
+  return matched.length / expected.length;
+}
+
+async function getEventPoster(teamA, teamB) {
+  const names = [teamA, teamB].map(cleanTeamName);
+  if (names.some(name => !name)) return DEFAULT_POSTER;
+  const cacheKey = names.sort().join('|');
+  if (sportsDbPosterCache.has(cacheKey)) return sportsDbPosterCache.get(cacheKey);
+
+  const lookup = (async () => {
+    try {
+      const query = encodeURIComponent(`${teamA}_vs_${teamB}`);
+      const response = await fetch(`https://www.thesportsdb.com/api/v1/json/123/searchevents.php?e=${query}`, {
+        signal: AbortSignal.timeout(8000),
+        headers: { Accept: 'application/json' }
+      });
+      if (!response.ok) return DEFAULT_POSTER;
+      const data = await response.json();
+      const events = Array.isArray(data.event) ? data.event : [];
+      const match = events
+        .map(event => ({ event, score: eventMatchScore(event.strEvent, teamA, teamB) }))
+        .filter(item => item.score >= 0.5)
+        .sort((a, b) => b.score - a.score)[0]?.event;
+      return match?.strPoster || match?.strThumb || DEFAULT_POSTER;
+    } catch {
+      return DEFAULT_POSTER;
+    }
+  })();
+  sportsDbPosterCache.set(cacheKey, lookup);
+  return lookup;
+}
+
+async function getEventPosterFor(event) {
+  const teams = extractTeams(event.title);
+  return teams.length === 2 ? getEventPoster(teams[0], teams[1]) : DEFAULT_POSTER;
+}
+
 function meta(id, type, name, description = '') {
   return { id, type, name, ...(description ? { description } : {}) };
 }
@@ -435,13 +506,12 @@ async function router(request, response) {
   }
   if (pathname === '/catalog/tv/agenda.json') {
     const events = await getAgenda();
-    // Poster informativo: logo de la competición + hora grande + nombre completo del evento
     return sendJson(response, 200, {
-      metas: events.map((event, index) => {
-        // Short hash of the title: changing content produces a new URL and bypasses image caches
-        const hash = Buffer.from(event.title, 'utf8').toString('base64url').replace(/[^a-z0-9]/gi, '').slice(0, 8).toLowerCase();
-        return meta(`event:${index}`, 'tv', formatTitle(event.title, event.hour), event.title);
-      })
+      metas: await Promise.all(events.map(async (event, index) => {
+        const item = meta(`event:${index}`, 'tv', formatTitle(event.title, event.hour), event.title);
+        item.poster = await getEventPosterFor(event);
+        return item;
+      }))
     });
   }
   const channelMatch = pathname.match(/^\/meta\/tv\/channel:(.+)\.json$/);
@@ -456,9 +526,10 @@ async function router(request, response) {
   const eventMatch = pathname.match(/^\/meta\/tv\/event:(\d+)\.json$/);
   if (eventMatch) {
     const event = (await getAgenda())[Number(eventMatch[1])];
-    return sendJson(response, event ? 200 : 404, event ? {
-      meta: meta(`event:${eventMatch[1]}`, 'tv', formatTitle(event.title, event.hour), event.title)
-    } : { error: 'Evento no encontrado' });
+    if (!event) return sendJson(response, 404, { error: 'Evento no encontrado' });
+    const eventMeta = meta(`event:${eventMatch[1]}`, 'tv', formatTitle(event.title, event.hour), event.title);
+    eventMeta.poster = await getEventPosterFor(event);
+    return sendJson(response, 200, { meta: eventMeta });
   }
   // Wraps a resolved stream through the local HLS proxy so any Stremio client can play it
   function proxiedStream(resolved, name, title) {
