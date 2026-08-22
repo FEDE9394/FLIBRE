@@ -175,12 +175,19 @@ const POSTER_COLORS = ['#1e3a8a', '#7c2d12', '#14532d', '#581c87', '#831843', '#
 
 const XML_ESCAPES = { 38: 'amp', 60: 'lt', 62: 'gt', 34: 'quot', 39: 'apos' };
 
+function normalizePosterText(text) {
+  return String(text ?? '')
+    .normalize('NFC')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .trim();
+}
+
 function escapeXml(text) {
-  return String(text).replace(/[&<>"']/g, char => '&' + XML_ESCAPES[char.charCodeAt(0)] + ';');
+  return normalizePosterText(text).replace(/[&<>"']/g, char => '&' + XML_ESCAPES[char.charCodeAt(0)] + ';');
 }
 
 function wrapWords(title, maxCharsPerLine = 14, maxLines = 4) {
-  const words = String(title).split(/\s+/).filter(Boolean);
+  const words = normalizePosterText(title).split(/\s+/).filter(Boolean);
   const lines = [];
   let line = '';
   for (const word of words) {
@@ -200,15 +207,16 @@ function wrapWords(title, maxCharsPerLine = 14, maxLines = 4) {
 }
 
 function posterSvg(title) {
-  const clean = String(title || '?').replace(/^[[\]]|[\][]/g, '').trim();
+  const clean = normalizePosterText(title || '?').replace(/^[[\]]|[\][]/g, '').trim();
   const hash = [...clean].reduce((acc, char) => acc + char.charCodeAt(0), 0);
   const bg = POSTER_COLORS[hash % POSTER_COLORS.length];
   const lines = wrapWords(clean.replace(/\s*:\s*/, ':\n').replace('\n', ' ') || '?');
   const startY = 300 - ((lines.length - 1) * 30);
   const textElements = lines.map((line, index) =>
-    `<text x="200" y="${startY + index * 60}" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="bold" fill="#ffffff" text-anchor="middle">${escapeXml(line)}</text>`
+    `<text x="200" y="${startY + index * 60}" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="34" font-weight="bold" fill="#ffffff" text-anchor="middle">${escapeXml(line)}</text>`
   ).join('');
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" viewBox="0 0 400 600">
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" viewBox="0 0 400 600" preserveAspectRatio="xMidYMid meet">
   <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${bg}"/><stop offset="100%" stop-color="#000000"/></linearGradient></defs>
   <rect width="400" height="600" fill="url(#g)"/>
   ${textElements}
@@ -242,12 +250,13 @@ function agendaPosterSvg(hour, eventName) {
   const lineStep = fontSize + 8;
   const startY = 420 - ((lines.length - 1) * lineStep / 2);
   const textElements = lines.map((line, index) =>
-    '<text x="200" y="' + Math.round(startY + index * lineStep) + '" font-family="Arial, Helvetica, sans-serif" font-size="' + fontSize + '" font-weight="bold" fill="#ffffff" text-anchor="middle">' + escapeXml(line) + '</text>'
+    '<text x="200" y="' + Math.round(startY + index * lineStep) + '" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="' + fontSize + '" font-weight="bold" fill="#ffffff" text-anchor="middle">' + escapeXml(line) + '</text>'
   ).join('');
-  return '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" viewBox="0 0 400 600">' +
+  return '<?xml version="1.0" encoding="UTF-8"?>' +
+    '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" viewBox="0 0 400 600" preserveAspectRatio="xMidYMid meet">' +
     '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#000000"/></linearGradient></defs>' +
     '<rect width="400" height="600" fill="url(#g)"/>' +
-    '<text x="200" y="150" font-family="Arial, Helvetica, sans-serif" font-size="88" font-weight="bold" fill="#fbbf24" text-anchor="middle">' + escapeXml(hour || '--:--') + '</text>' +
+    '<text x="200" y="150" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="88" font-weight="bold" fill="#fbbf24" text-anchor="middle">' + escapeXml(hour || '--:--') + '</text>' +
     '<rect x="50" y="185" width="300" height="4" fill="#fbbf24" opacity="0.6"/>' +
     textElements +
     '</svg>';
