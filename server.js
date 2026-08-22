@@ -1,6 +1,9 @@
 const http = require('node:http');
 const { URL } = require('node:url');
 const cheerio = require('cheerio');
+// Converts generated SVG posters to PNG (Android Stremio cannot render SVG)
+let sharp = null;
+try { sharp = require('sharp'); } catch { /* optional dependency */ }
 
 const BASE_URL = process.env.BASE_URL || 'https://futbollibre.ad/';
 const AGENDA_URL = process.env.AGENDA_URL || 'https://futbollibretv.org.pe/diaries.json?v=2.2';
@@ -263,6 +266,20 @@ function sendSvg(response, status, svg) {
   response.end(svg);
 }
 
+// Sends a poster as PNG when possible (better Android compatibility), SVG as fallback
+async function sendPoster(response, status, svg) {
+  if (sharp) {
+    try {
+      const png = await sharp(Buffer.from(svg), { density: 150 }).png().toBuffer();
+      response.writeHead(status, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400', 'Access-Control-Allow-Origin': '*' });
+      return response.end(png);
+    } catch (error) {
+      log('No se pudo convertir el poster a PNG: ' + error.message, true);
+    }
+  }
+  sendSvg(response, status, svg);
+}
+
 // ---- HLS proxy: makes remote streams playable directly by Stremio ----
 
 const b64e = value => Buffer.from(String(value), 'utf8').toString('base64url');
@@ -343,18 +360,18 @@ async function router(request, response) {
   // Generated poster endpoint: /poster/<title>.svg
   const posterMatch = pathname.match(/^\/poster\/(.+)\.svg$/i);
   if (posterMatch) {
-    return sendSvg(response, 200, posterSvg(posterMatch[1]));
+    return sendPoster(response, 200, posterSvg(posterMatch[1]));
   }
 
   // Agenda event poster: /agenda-poster/<index>.svg
   const agendaPosterMatch = pathname.match(/^\/agenda-poster\/(\d+)\.svg$/i);
   if (agendaPosterMatch) {
     const event = (await getAgenda())[Number(agendaPosterMatch[1])];
-    if (!event) return sendSvg(response, 404, posterSvg('Evento no encontrado'));
+    if (!event) return sendPoster(response, 404, posterSvg('Evento no encontrado'));
     // Strip the "[hh:mm] " prefix from the title for the poster text
     const eventName = event.title.replace(/^\[[^\]]+\]\s*/, '');
     const logo = await imageDataUri(event.image);
-    return sendSvg(response, 200, agendaPosterSvg(event.hour, eventName, logo));
+    return sendPoster(response, 200, agendaPosterSvg(event.hour, eventName, logo));
   }
 
   // HLS proxy endpoints
