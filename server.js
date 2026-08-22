@@ -236,22 +236,18 @@ async function imageDataUri(url) {
   }
 }
 
-// Poster for agenda events: competition logo + big hour + full event name
-function agendaPosterSvg(hour, eventName, logoDataUri) {
-  const lines = wrapWords(eventName || 'Evento', 20, 5);
-  const startY = 400 - ((lines.length - 1) * 17);
+// Poster for agenda events: text only - big hour + full event name
+function agendaPosterSvg(hour, eventName) {
+  const lines = wrapWords(eventName || 'Evento', 18, 7);
+  const startY = 430 - ((lines.length - 1) * 19);
   const textElements = lines.map((line, index) =>
-    '<text x="200" y="' + (startY + index * 34) + '" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="bold" fill="#ffffff" text-anchor="middle">' + escapeXml(line) + '</text>'
+    '<text x="200" y="' + (startY + index * 38) + '" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="bold" fill="#ffffff" text-anchor="middle">' + escapeXml(line) + '</text>'
   ).join('');
-  const logo = logoDataUri
-    ? '<image x="110" y="70" width="180" height="140" preserveAspectRatio="xMidYMid meet" href="' + logoDataUri + '"/>'
-    : '<circle cx="200" cy="140" r="62" fill="rgba(255,255,255,0.12)"/><path d="M200 92 L242 122 L226 170 L174 170 L158 122 Z" fill="rgba(255,255,255,0.35)"/>';
   return '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" viewBox="0 0 400 600">' +
     '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#000000"/></linearGradient></defs>' +
     '<rect width="400" height="600" fill="url(#g)"/>' +
-    logo +
-    '<text x="200" y="300" font-family="Arial, Helvetica, sans-serif" font-size="76" font-weight="bold" fill="#fbbf24" text-anchor="middle">' + escapeXml(hour || '--:--') + '</text>' +
-    '<rect x="40" y="330" width="320" height="3" fill="#fbbf24" opacity="0.6"/>' +
+    '<text x="200" y="150" font-family="Arial, Helvetica, sans-serif" font-size="88" font-weight="bold" fill="#fbbf24" text-anchor="middle">' + escapeXml(hour || '--:--') + '</text>' +
+    '<rect x="50" y="185" width="300" height="4" fill="#fbbf24" opacity="0.6"/>' +
     textElements +
     '</svg>';
 }
@@ -370,8 +366,7 @@ async function router(request, response) {
     if (!event) return sendPoster(response, 404, posterSvg('Evento no encontrado'));
     // Strip the "[hh:mm] " prefix from the title for the poster text
     const eventName = event.title.replace(/^\[[^\]]+\]\s*/, '');
-    const logo = await imageDataUri(event.image);
-    return sendPoster(response, 200, agendaPosterSvg(event.hour, eventName, logo));
+    return sendPoster(response, 200, agendaPosterSvg(event.hour, eventName));
   }
 
   // HLS proxy endpoints
