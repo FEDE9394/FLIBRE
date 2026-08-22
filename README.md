@@ -12,8 +12,10 @@ npm start
 Luego se instala en Stremio con:
 
 ```text
-http://localhost:7000/manifest.json
+http://localhost:7010/manifest.json
 ```
+
+> **Nota:** el puerto por defecto es `7010` (antes era `7000`, que suele estar ocupado por otros addons). Si también está ocupado, inicia el servidor con otro puerto: `set PORT=7020 && node server.js` y usa ese puerto en la URL del manifest.
 
 También puedes abrir la URL principal del servidor para usar el instalador web. El botón **Instalar en Stremio** abre el protocolo `stremio://` con el manifest correcto.
 
@@ -33,6 +35,6 @@ https://tu-proyecto.vercel.app/manifest.json
 
 En **Settings > Environment Variables** puedes personalizar `BASE_URL`, `AGENDA_URL` e `ICON_URL`. No necesitas configurar `PORT`: Vercel administra ese puerto.
 
-Para probarlo localmente, `npm start` sigue funcionando en `http://localhost:7000/manifest.json`.
+Para probarlo localmente, `npm start` sigue funcionando en `http://localhost:7010/manifest.json`.
 
 Usa esta integración únicamente con fuentes y emisiones que tengas autorización para redistribuir.
