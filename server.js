@@ -350,8 +350,36 @@ function localUrl(request, path) {
   return `${proto}://${host}${path}`;
 }
 
-function meta(id, type, name) {
-  return { id, type, name };
+const TOURNAMENT_WORDS = /\b(?:liga|league|copa|cup|torneo|tournament|uefa|conmebol|fifa|grand\s+prix|premier|profesional|professional|champions|mundial|world|qualifiers?|clasificaci[oó]n|fecha|jornada|semifinal|final)\b/gi;
+
+function shortenParticipant(participant) {
+  const clean = participant.replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+  if (clean.length <= 9) return clean;
+  const words = clean.split(' ').filter(Boolean);
+  if (words.length > 1) {
+    const acronym = words.map(word => word[0]).join('').toUpperCase();
+    if (acronym.length >= 2 && acronym.length <= 4) return acronym;
+  }
+  return clean.slice(0, 8).trimEnd() + '.';
+}
+
+function formatTitle(originalTitle, time = '') {
+  const original = String(originalTitle || '').replace(/^\[[^\]]+\]\s*/, '').trim();
+  const withoutTournament = original
+    .replace(TOURNAMENT_WORDS, '')
+    .replace(/[|,:]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const participants = withoutTournament.split(/\s+(?:vs\.?|v\.?|contra|at|@)\s+|\s+-\s+/i).map(shortenParticipant).filter(Boolean);
+  const match = participants.length >= 2 ? `${participants[0]} vs ${participants[1]}` : shortenParticipant(withoutTournament || original);
+  const clock = String(time || '').match(/\d{1,2}:\d{2}/)?.[0] || originalTitle.match(/^\[(\d{1,2}:\d{2})\]/)?.[1] || '';
+  const prefix = clock ? `[${clock}] ` : '';
+  const available = Math.max(1, 22 - prefix.length);
+  return `${prefix}${match}`.slice(0, prefix.length + available).trimEnd();
+}
+
+function meta(id, type, name, description = '') {
+  return { id, type, name, ...(description ? { description } : {}) };
 }
 
 async function router(request, response) {
@@ -412,8 +440,7 @@ async function router(request, response) {
       metas: events.map((event, index) => {
         // Short hash of the title: changing content produces a new URL and bypasses image caches
         const hash = Buffer.from(event.title, 'utf8').toString('base64url').replace(/[^a-z0-9]/gi, '').slice(0, 8).toLowerCase();
-        return meta(`event:${index}`, 'tv', event.title,
-          localUrl(request, `/agenda-poster/${index}-${hash}.svg`));
+        return meta(`event:${index}`, 'tv', formatTitle(event.title, event.hour), event.title);
       })
     });
   }
@@ -430,8 +457,7 @@ async function router(request, response) {
   if (eventMatch) {
     const event = (await getAgenda())[Number(eventMatch[1])];
     return sendJson(response, event ? 200 : 404, event ? {
-      meta: meta(`event:${eventMatch[1]}`, 'tv', event.title,
-        localUrl(request, `/agenda-poster/${eventMatch[1]}.svg`))
+      meta: meta(`event:${eventMatch[1]}`, 'tv', formatTitle(event.title, event.hour), event.title)
     } : { error: 'Evento no encontrado' });
   }
   // Wraps a resolved stream through the local HLS proxy so any Stremio client can play it
