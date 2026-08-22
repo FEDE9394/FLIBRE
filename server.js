@@ -214,6 +214,45 @@ function posterSvg(title) {
 </svg>`;
 }
 
+// Cache for competition images embedded into agenda posters
+const imageCache = new Map();
+
+async function imageDataUri(url) {
+  if (!url) return '';
+  if (imageCache.has(url)) return imageCache.get(url);
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!response.ok) throw new Error(String(response.status));
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const mime = response.headers.get('content-type') || 'image/png';
+    const uri = 'data:' + mime + ';base64,' + buffer.toString('base64');
+    imageCache.set(url, uri);
+    return uri;
+  } catch {
+    return '';
+  }
+}
+
+// Poster for agenda events: competition logo + big hour + full event name
+function agendaPosterSvg(hour, eventName, logoDataUri) {
+  const lines = wrapWords(eventName || 'Evento', 20, 5);
+  const startY = 400 - ((lines.length - 1) * 17);
+  const textElements = lines.map((line, index) =>
+    '<text x="200" y="' + (startY + index * 34) + '" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="bold" fill="#ffffff" text-anchor="middle">' + escapeXml(line) + '</text>'
+  ).join('');
+  const logo = logoDataUri
+    ? '<image x="110" y="70" width="180" height="140" preserveAspectRatio="xMidYMid meet" href="' + logoDataUri + '"/>'
+    : '<circle cx="200" cy="140" r="62" fill="rgba(255,255,255,0.12)"/><path d="M200 92 L242 122 L226 170 L174 170 L158 122 Z" fill="rgba(255,255,255,0.35)"/>';
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" viewBox="0 0 400 600">' +
+    '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#000000"/></linearGradient></defs>' +
+    '<rect width="400" height="600" fill="url(#g)"/>' +
+    logo +
+    '<text x="200" y="300" font-family="Arial, Helvetica, sans-serif" font-size="76" font-weight="bold" fill="#fbbf24" text-anchor="middle">' + escapeXml(hour || '--:--') + '</text>' +
+    '<rect x="40" y="330" width="320" height="3" fill="#fbbf24" opacity="0.6"/>' +
+    textElements +
+    '</svg>';
+}
+
 function sendJson(response, status, body) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
   response.end(JSON.stringify(body));
@@ -307,6 +346,17 @@ async function router(request, response) {
     return sendSvg(response, 200, posterSvg(posterMatch[1]));
   }
 
+  // Agenda event poster: /agenda-poster/<index>.svg
+  const agendaPosterMatch = pathname.match(/^\/agenda-poster\/(\d+)\.svg$/i);
+  if (agendaPosterMatch) {
+    const event = (await getAgenda())[Number(agendaPosterMatch[1])];
+    if (!event) return sendSvg(response, 404, posterSvg('Evento no encontrado'));
+    // Strip the "[hh:mm] " prefix from the title for the poster text
+    const eventName = event.title.replace(/^\[[^\]]+\]\s*/, '');
+    const logo = await imageDataUri(event.image);
+    return sendSvg(response, 200, agendaPosterSvg(event.hour, eventName, logo));
+  }
+
   // HLS proxy endpoints
   if (pathname === '/hls/master.m3u8' || pathname === '/hls/media.m3u8') {
     return hlsProxy(request, response, url.searchParams, true);
@@ -335,9 +385,12 @@ async function router(request, response) {
   }
   if (pathname === '/catalog/tv/agenda.json') {
     const events = await getAgenda();
-    // Sin poster: se prioriza que el horario y el nombre del evento se lean claramente
+    // Poster informativo: logo de la competición + hora grande + nombre completo del evento
     return sendJson(response, 200, {
-      metas: events.map((event, index) => meta(`event:${index}`, 'tv', event.title))
+      metas: events.map((event, index) => meta(
+        `event:${index}`, 'tv', event.title,
+        localUrl(request, `/agenda-poster/${index}.svg`)
+      ))
     });
   }
   const channelMatch = pathname.match(/^\/meta\/tv\/channel:(.+)\.json$/);
@@ -353,7 +406,8 @@ async function router(request, response) {
   if (eventMatch) {
     const event = (await getAgenda())[Number(eventMatch[1])];
     return sendJson(response, event ? 200 : 404, event ? {
-      meta: meta(`event:${eventMatch[1]}`, 'tv', event.title)
+      meta: meta(`event:${eventMatch[1]}`, 'tv', event.title,
+        localUrl(request, `/agenda-poster/${eventMatch[1]}.svg`))
     } : { error: 'Evento no encontrado' });
   }
   // Wraps a resolved stream through the local HLS proxy so any Stremio client can play it
