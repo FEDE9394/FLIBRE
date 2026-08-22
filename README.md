@@ -15,19 +15,22 @@ Luego se instala en Stremio con:
 http://localhost:7000/manifest.json
 ```
 
-## Desplegar en Render
+## Desplegar en Vercel
 
 1. Sube esta carpeta a un repositorio de GitHub.
-2. En Render selecciona **New > Blueprint** y conecta el repositorio.
-3. Render detectará `render.yaml`, instalará las dependencias y arrancará el servidor.
-4. Copia la URL pública asignada por Render y agrégale `/manifest.json` en Stremio.
+2. Entra a Vercel y selecciona **Add New > Project**.
+3. Importa el repositorio de GitHub y deja la configuración por defecto.
+4. Pulsa **Deploy**. Vercel usará `vercel.json` y `api/index.js` automáticamente.
+5. Copia la URL pública asignada por Vercel y agrégale `/manifest.json` en Stremio.
 
 Ejemplo:
 
 ```text
-https://tu-servicio.onrender.com/manifest.json
+https://tu-proyecto.vercel.app/manifest.json
 ```
 
-En un hosting, usar el mismo `manifest.json` reemplazando `localhost` por el dominio público. El servidor escucha en `PORT` y permite personalizar `BASE_URL`, `AGENDA_URL` e `ICON_URL` mediante variables de entorno.
+En **Settings > Environment Variables** puedes personalizar `BASE_URL`, `AGENDA_URL` e `ICON_URL`. No necesitas configurar `PORT`: Vercel administra ese puerto.
+
+Para probarlo localmente, `npm start` sigue funcionando en `http://localhost:7000/manifest.json`.
 
 Usa esta integración únicamente con fuentes y emisiones que tengas autorización para redistribuir.

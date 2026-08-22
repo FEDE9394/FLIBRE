@@ -2,7 +2,6 @@ const http = require('node:http');
 const { URL } = require('node:url');
 const cheerio = require('cheerio');
 
-const PORT = Number(process.env.PORT || 7000);
 const BASE_URL = process.env.BASE_URL || 'https://futbollibre.ad/';
 const AGENDA_URL = process.env.AGENDA_URL || 'https://futbollibretv.org.pe/diaries.json?v=2.2';
 const USER_AGENT = process.env.USER_AGENT || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36';
@@ -194,5 +193,14 @@ async function router(request, response) {
   return sendJson(response, 404, { error: 'Ruta no encontrada' });
 }
 
-const server = http.createServer((request, response) => router(request, response).catch(error => { log(error.message, true); sendJson(response, 502, { error: 'No se pudo consultar la fuente' }); }));
-server.listen(PORT, '0.0.0.0', () => log(`Servidor escuchando en http://localhost:${PORT}`));
+const handler = (request, response) => router(request, response).catch(error => {
+  log(error.message, true);
+  sendJson(response, 502, { error: 'No se pudo consultar la fuente' });
+});
+
+module.exports = handler;
+
+if (require.main === module) {
+  const PORT = Number(process.env.PORT || 7000);
+  http.createServer(handler).listen(PORT, '0.0.0.0', () => log(`Servidor escuchando en http://localhost:${PORT}`));
+}
