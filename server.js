@@ -223,25 +223,6 @@ function posterSvg(title) {
 </svg>`;
 }
 
-// Cache for competition images embedded into agenda posters
-const imageCache = new Map();
-
-async function imageDataUri(url) {
-  if (!url) return '';
-  if (imageCache.has(url)) return imageCache.get(url);
-  try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (!response.ok) throw new Error(String(response.status));
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const mime = response.headers.get('content-type') || 'image/png';
-    const uri = 'data:' + mime + ';base64,' + buffer.toString('base64');
-    imageCache.set(url, uri);
-    return uri;
-  } catch {
-    return '';
-  }
-}
-
 // Poster for agenda events: text only - big hour + full event name
 function agendaPosterSvg(hour, eventName) {
   // Up to 10 short lines so long names are never cut off
@@ -258,23 +239,6 @@ function agendaPosterSvg(hour, eventName) {
     '<rect width="400" height="600" fill="url(#g)"/>' +
     '<text x="200" y="150" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="88" font-weight="bold" fill="#fbbf24" text-anchor="middle">' + escapeXml(hour || '--:--') + '</text>' +
     '<rect x="50" y="185" width="300" height="4" fill="#fbbf24" opacity="0.6"/>' +
-    textElements +
-    '</svg>';
-}
-
-function badgePosterSvg(hour, eventName, badgeA, badgeB) {
-  const nameLines = wrapWords(eventName || 'Evento', 18, 5);
-  const textElements = nameLines.map((line, index) =>
-    '<text x="200" y="' + (425 + index * 30) + '" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#ffffff" text-anchor="middle">' + escapeXml(line) + '</text>'
-  ).join('');
-  const image = (uri, x) => uri ? '<image href="' + escapeXml(uri) + '" x="' + x + '" y="145" width="130" height="130" preserveAspectRatio="xMidYMid meet"/>' : '';
-  return '<?xml version="1.0" encoding="UTF-8"?>' +
-    '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" viewBox="0 0 400 600">' +
-    '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#000000"/></linearGradient></defs>' +
-    '<rect width="400" height="600" fill="url(#g)"/>' +
-    '<text x="200" y="95" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="64" font-weight="bold" fill="#fbbf24" text-anchor="middle">' + escapeXml(hour || '--:--') + '</text>' +
-    image(badgeA, 35) + image(badgeB, 235) +
-    '<text x="200" y="320" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="34" font-weight="bold" fill="#fbbf24" text-anchor="middle">VS</text>' +
     textElements +
     '</svg>';
 }
@@ -397,10 +361,6 @@ function formatTitle(originalTitle, time = '') {
 
 const DEFAULT_POSTER = 'https://placehold.co/400x600/0f172a/fbbf24/png?text=Futbol+Libre';
 const sportsDbPosterCache = new Map();
-const promiedosBadgeCache = new Map();
-let promiedosTeamsPromise;
-const PROMIEDOS_URL = 'https://www.promiedos.com.ar/';
-const PROMIEDOS_IMAGE_URL = 'https://api.promiedos.com.ar/images/team/';
 const TEAM_SUFFIXES = /\b(?:fc|f\.c\.|club|s\.a\.d\.|sad|cf|c\.f\.)\b/gi;
 
 function cleanTeamName(value) {
@@ -468,60 +428,10 @@ async function getEventPoster(teamA, teamB) {
   return (await lookup) || DEFAULT_POSTER;
 }
 
-async function findSportsDbPoster(teamA, teamB) {
-  const poster = await getEventPoster(teamA, teamB);
-  return poster === DEFAULT_POSTER ? '' : poster;
-}
-
-async function getPromiedosTeams() {
-  if (!promiedosTeamsPromise) {
-    promiedosTeamsPromise = (async () => {
-      try {
-        const response = await fetch(PROMIEDOS_URL, { signal: AbortSignal.timeout(10000) });
-        if (!response.ok) return [];
-        const html = await response.text();
-        const teams = [];
-        const pattern = /\{"name":"([^"\\]*(?:\\.[^"\\]*)*)","short_name":"([^"\\]*)","url_name":"([^"\\]*)","id":"([a-z0-9]+)"/gi;
-        for (const match of html.matchAll(pattern)) {
-          teams.push({ name: match[1], shortName: match[2], id: match[4] });
-        }
-        return teams;
-      } catch {
-        return [];
-      }
-    })();
-  }
-  return promiedosTeamsPromise;
-}
-
-async function getPromiedosBadge(teamName) {
-  const key = cleanTeamName(teamName);
-  if (!key) return '';
-  if (promiedosBadgeCache.has(key)) return promiedosBadgeCache.get(key);
-  const lookup = (async () => {
-    const teams = await getPromiedosTeams();
-    const match = teams
-      .map(team => ({ team, score: eventMatchScore(team.name, teamName, teamName) }))
-      .filter(item => item.score >= 0.5)
-      .sort((a, b) => b.score - a.score)[0]?.team;
-    return match ? `${PROMIEDOS_IMAGE_URL}${encodeURIComponent(match.id)}/4` : '';
-  })();
-  promiedosBadgeCache.set(key, lookup);
-  return lookup;
-}
-
 async function getEventArtwork(event) {
   const teams = extractTeams(event.title);
-  if (teams.length !== 2) return { poster: DEFAULT_POSTER };
-  const sportsDbPoster = await findSportsDbPoster(teams[0], teams[1]);
-  if (sportsDbPoster) return { poster: sportsDbPoster };
-  const [badgeA, badgeB] = await Promise.all([getPromiedosBadge(teams[0]), getPromiedosBadge(teams[1])]);
-  return badgeA && badgeB ? { badges: [badgeA, badgeB] } : { poster: DEFAULT_POSTER };
-}
-
-async function getEventPosterFor(event) {
-  const teams = extractTeams(event.title);
-  return teams.length === 2 ? getEventPoster(teams[0], teams[1]) : DEFAULT_POSTER;
+  if (teams.length !== 2) return DEFAULT_POSTER;
+  return getEventPoster(teams[0], teams[1]);
 }
 
 function meta(id, type, name, description = '') {
@@ -549,18 +459,10 @@ async function router(request, response) {
     const event = (await getAgenda())[Number(agendaPosterMatch[1])];
     if (!event) return sendPoster(response, 404, posterSvg('Evento no encontrado'));
     const artwork = await getEventArtwork(event);
-    if (artwork.poster && artwork.poster !== DEFAULT_POSTER) {
-      response.writeHead(302, { Location: artwork.poster, 'Cache-Control': 'public, max-age=86400' });
+    if (artwork !== DEFAULT_POSTER) {
+      response.writeHead(302, { Location: artwork, 'Cache-Control': 'public, max-age=86400' });
       return response.end();
     }
-    if (artwork.badges) {
-      const [badgeA, badgeB] = await Promise.all(artwork.badges.map(imageDataUri));
-      if (badgeA && badgeB) {
-        const eventName = event.title.replace(/^\[[^\]]+\]\s*/, '');
-        return sendPoster(response, 200, badgePosterSvg(event.hour, eventName, badgeA, badgeB));
-      }
-    }
-    // Strip the "[hh:mm] " prefix from the title for the poster text
     const eventName = event.title.replace(/^\[[^\]]+\]\s*/, '');
     return sendPoster(response, 200, agendaPosterSvg(event.hour, eventName));
   }
@@ -598,7 +500,7 @@ async function router(request, response) {
         const item = meta(`event:${index}`, 'tv', event.title, event.title);
         const artwork = await getEventArtwork(event);
         const hash = Buffer.from(event.title, 'utf8').toString('base64url').replace(/[^a-z0-9]/gi, '').slice(0, 8).toLowerCase();
-        item.poster = artwork.badges ? localUrl(request, `/agenda-poster/${index}-${hash}.svg`) : artwork.poster;
+        item.poster = artwork === DEFAULT_POSTER ? localUrl(request, `/agenda-poster/${index}-${hash}.svg`) : artwork;
         return item;
       }))
     });
@@ -619,7 +521,7 @@ async function router(request, response) {
     const eventMeta = meta(`event:${eventMatch[1]}`, 'tv', event.title, event.title);
     const artwork = await getEventArtwork(event);
     const hash = Buffer.from(event.title, 'utf8').toString('base64url').replace(/[^a-z0-9]/gi, '').slice(0, 8).toLowerCase();
-    eventMeta.poster = artwork.badges ? localUrl(request, `/agenda-poster/${eventMatch[1]}-${hash}.svg`) : artwork.poster;
+    eventMeta.poster = artwork === DEFAULT_POSTER ? localUrl(request, `/agenda-poster/${eventMatch[1]}-${hash}.svg`) : artwork;
     return sendJson(response, 200, { meta: eventMeta });
   }
   // Wraps a resolved stream through the local HLS proxy so any Stremio client can play it
