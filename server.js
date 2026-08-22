@@ -401,10 +401,13 @@ function teamTokens(value) {
 function extractTeams(title) {
   const withoutTime = String(title || '').replace(/^\[[^\]]+\]\s*/, '');
   const withoutCompetition = withoutTime.replace(TOURNAMENT_WORDS, '').replace(/\s+/g, ' ').trim();
-  const parts = withoutCompetition.split(/\s+(?:vs\.?|v\.?|contra|at|@)\s+|\s+-\s+/i)
-    .map(part => part.trim())
-    .filter(Boolean);
-  return parts.length >= 2 ? [parts[0], parts[1]] : [];
+  const match = withoutCompetition.match(/^.*?\s+(?:vs\.?|v\.?|contra|at|@)\s+(.+)$/i) ||
+    withoutCompetition.match(/^(.+?)\s+-\s+(.+)$/i);
+  if (!match) return [];
+  const separator = /\s+(?:vs\.?|v\.?|contra|at|@)\s+/i.test(withoutCompetition) ?
+    withoutCompetition.match(/\s+(?:vs\.?|v\.?|contra|at|@)\s+/i) : withoutCompetition.match(/\s+-\s+/i);
+  const teamA = withoutCompetition.slice(0, separator.index).replace(/^[^:]+:\s*/, '').trim();
+  return teamA && match[1] ? [teamA, match[1].trim()] : [];
 }
 
 function eventMatchScore(eventName, teamA, teamB) {
@@ -508,7 +511,7 @@ async function router(request, response) {
     const events = await getAgenda();
     return sendJson(response, 200, {
       metas: await Promise.all(events.map(async (event, index) => {
-        const item = meta(`event:${index}`, 'tv', formatTitle(event.title, event.hour), event.title);
+        const item = meta(`event:${index}`, 'tv', event.title, event.title);
         item.poster = await getEventPosterFor(event);
         return item;
       }))
@@ -527,7 +530,7 @@ async function router(request, response) {
   if (eventMatch) {
     const event = (await getAgenda())[Number(eventMatch[1])];
     if (!event) return sendJson(response, 404, { error: 'Evento no encontrado' });
-    const eventMeta = meta(`event:${eventMatch[1]}`, 'tv', formatTitle(event.title, event.hour), event.title);
+    const eventMeta = meta(`event:${eventMatch[1]}`, 'tv', event.title, event.title);
     eventMeta.poster = await getEventPosterFor(event);
     return sendJson(response, 200, { meta: eventMeta });
   }
