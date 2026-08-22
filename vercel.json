@@ -2,7 +2,19 @@
   "version": 2,
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/manifest.json",
+      "destination": "/api"
+    },
+    {
+      "source": "/catalog/:path*",
+      "destination": "/api"
+    },
+    {
+      "source": "/meta/:path*",
+      "destination": "/api"
+    },
+    {
+      "source": "/stream/:path*",
       "destination": "/api"
     }
   ]

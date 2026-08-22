@@ -15,6 +15,8 @@ Luego se instala en Stremio con:
 http://localhost:7000/manifest.json
 ```
 
+También puedes abrir la URL principal del servidor para usar el instalador web. El botón **Instalar en Stremio** abre el protocolo `stremio://` con el manifest correcto.
+
 ## Desplegar en Vercel
 
 1. Sube esta carpeta a un repositorio de GitHub.

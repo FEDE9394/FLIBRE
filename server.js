@@ -147,7 +147,13 @@ function meta(id, type, name, poster = ICON_URL) {
 
 async function router(request, response) {
   const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
-  if (url.pathname === '/manifest.json') {
+  let pathname;
+  try {
+    pathname = decodeURIComponent(url.pathname);
+  } catch {
+    pathname = url.pathname;
+  }
+  if (pathname === '/manifest.json') {
     return sendJson(response, 200, {
       id: 'community.futbollibre', version: '1.0.0', name: 'Fútbol Libre', description: 'Canales deportivos y agenda de partidos', logo: ICON_URL || undefined,
       resources: ['catalog', 'meta', 'stream'], types: ['tv', 'movie'], catalogs: [
@@ -155,31 +161,31 @@ async function router(request, response) {
       ], idPrefixes: ['channel:', 'event:']
     });
   }
-  if (url.pathname === '/catalog/tv/channels.json') {
+  if (pathname === '/catalog/tv/channels.json') {
     const channels = await getChannels();
     return sendJson(response, 200, { metas: channels.map(channel => meta(`channel:${encodeURIComponent(channel.url)}`, 'tv', channel.title, channel.image || ICON_URL)) });
   }
-  if (url.pathname === '/catalog/tv/agenda.json') {
+  if (pathname === '/catalog/tv/agenda.json') {
     const events = await getAgenda();
     return sendJson(response, 200, { metas: events.map((event, index) => meta(`event:${index}`, 'tv', event.title, ICON_URL)) });
   }
-  const channelMatch = url.pathname.match(/^\/meta\/tv\/channel:(.+)\.json$/);
+  const channelMatch = pathname.match(/^\/meta\/tv\/channel:(.+)\.json$/);
   if (channelMatch) {
     const channelUrl = decodeURIComponent(channelMatch[1]);
     const channel = (await getChannels()).find(item => item.url === channelUrl);
     return sendJson(response, channel ? 200 : 404, channel ? { meta: meta(`channel:${encodeURIComponent(channel.url)}`, 'tv', channel.title, channel.image || ICON_URL) } : { error: 'Canal no encontrado' });
   }
-  const eventMatch = url.pathname.match(/^\/meta\/tv\/event:(\d+)\.json$/);
+  const eventMatch = pathname.match(/^\/meta\/tv\/event:(\d+)\.json$/);
   if (eventMatch) {
     const event = (await getAgenda())[Number(eventMatch[1])];
     return sendJson(response, event ? 200 : 404, event ? { meta: meta(`event:${eventMatch[1]}`, 'tv', event.title, ICON_URL) } : { error: 'Evento no encontrado' });
   }
-  const streamMatch = url.pathname.match(/^\/stream\/tv\/channel:(.+)\.json$/);
+  const streamMatch = pathname.match(/^\/stream\/tv\/channel:(.+)\.json$/);
   if (streamMatch) {
     const resolved = await resolveStream(decodeURIComponent(streamMatch[1]));
     return sendJson(response, resolved ? 200 : 404, { streams: resolved ? [{ name: 'Fútbol Libre', title: 'Reproducir', url: resolved.url, behaviorHints: { notWebReady: true }, headers: { Referer: resolved.referer, 'User-Agent': USER_AGENT } }] : [] });
   }
-  const eventStreamMatch = url.pathname.match(/^\/stream\/tv\/event:(\d+)\.json$/);
+  const eventStreamMatch = pathname.match(/^\/stream\/tv\/event:(\d+)\.json$/);
   if (eventStreamMatch) {
     const event = (await getAgenda())[Number(eventStreamMatch[1])];
     const streams = [];
@@ -189,7 +195,7 @@ async function router(request, response) {
     }
     return sendJson(response, 200, { streams });
   }
-  if (url.pathname === '/') return sendJson(response, 200, { name: 'Fútbol Libre Stremio Addon', manifest: '/manifest.json' });
+  if (pathname === '/') return sendJson(response, 200, { name: 'Fútbol Libre Stremio Addon', manifest: '/manifest.json' });
   return sendJson(response, 404, { error: 'Ruta no encontrada' });
 }
 
