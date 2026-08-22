@@ -95,9 +95,8 @@ function parseAgenda(html) {
       url: absoluteUrl($(link).attr('href'))
     })).get().filter(option => option.url);
     if (!options.length) return;
-    // Readable title: [22/8 07:00] Competición: Evento
-    const whenParts = [currentDate, hour].filter(Boolean).join(' ');
-    const fullTitle = `${whenParts ? `[${whenParts}] ` : ''}${competition ? `${competition}: ` : ''}${title}`;
+    // Readable title: [07:00] Competición: Evento (solo hora, son eventos del día)
+    const fullTitle = `${hour ? `[${hour}] ` : ''}${competition ? `${competition}: ` : ''}${title}`;
     events.push({ title: fullTitle, date: currentDate, hour, image, options });
   });
   return events;
@@ -116,8 +115,7 @@ function parseAgendaJson(text) {
       url: absoluteUrl(embed.attributes?.embed_iframe || '', agendaBase)
     })).filter(option => option.url);
     if (!options.length) return null;
-    const whenParts = [date, hour].filter(Boolean).join(' ');
-    return { title: `${whenParts ? `[${whenParts}] ` : ''}${description}`, date, hour, image: '', options };
+    return { title: `${hour ? `[${hour}] ` : ''}${description}`, date, hour, image: '', options };
   }).filter(Boolean);
 }
 
