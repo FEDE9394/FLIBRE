@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: futbollibre-stremio-addon
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
