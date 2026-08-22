@@ -226,6 +226,63 @@ function sendSvg(response, status, svg) {
   response.end(svg);
 }
 
+// ---- HLS proxy: makes remote streams playable directly by Stremio ----
+
+const b64e = value => Buffer.from(String(value), 'utf8').toString('base64url');
+const b64d = value => Buffer.from(value, 'base64url').toString('utf8');
+
+// Rewrites every URI inside an M3U8 playlist so requests pass through this server
+function rewritePlaylist(text, sourceUrl, referer, request) {
+  const proxied = target => `${localUrl(request, '/hls/fetch')}` +
+    `?u=${encodeURIComponent(b64e(target))}&r=${encodeURIComponent(b64e(referer || ''))}`;
+  return text.split('\n').map(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return line;
+    if (trimmed.startsWith('#')) {
+      // Rewrite URIs inside tags such as #EXT-X-KEY:URI="..." or #EXT-X-MAP:URI="..."
+      return line.replace(/URI="([^"]+)"/g, (_, uri) => `URI="${proxied(absoluteUrl(uri, sourceUrl))}"`);
+    }
+    return proxied(absoluteUrl(trimmed, sourceUrl));
+  }).join('\n');
+}
+
+async function hlsProxy(request, response, searchParams, isPlaylist) {
+  const target = b64d(searchParams.get('u') || '');
+  const referer = b64d(searchParams.get('r') || '');
+  if (!target) return sendJson(response, 400, { error: 'Falta la URL del stream' });
+  const upstream = await fetch(target, {
+    headers: {
+      'User-Agent': USER_AGENT,
+      ...(referer ? { Referer: referer } : {})
+    },
+    signal: AbortSignal.timeout(15000)
+  });
+  if (!upstream.ok) throw new Error(`${upstream.status} ${upstream.statusText}`);
+  const contentType = upstream.headers.get('content-type') || '';
+  // Variant playlists may arrive through /hls/fetch: detect them by URL or content-type
+  const looksLikePlaylist = isPlaylist || /\.m3u8(\?|$)/i.test(target) || /mpegurl/i.test(contentType);
+  if (looksLikePlaylist) {
+    const body = await upstream.text();
+    response.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
+    return response.end(rewritePlaylist(body, target, referer, request));
+  }
+  // Segments / keys: stream binary through
+  response.writeHead(200, {
+    'Content-Type': contentType || 'application/octet-stream',
+    'Access-Control-Allow-Origin': '*'
+  });
+  const reader = upstream.body.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      response.write(Buffer.from(value));
+    }
+  } finally {
+    response.end();
+  }
+}
+
 // Builds an absolute URL for local endpoints based on the incoming request
 function localUrl(request, path) {
   const host = request.headers['x-forwarded-host'] || request.headers.host || `localhost:${PORT}`;
@@ -252,6 +309,14 @@ async function router(request, response) {
     return sendSvg(response, 200, posterSvg(posterMatch[1]));
   }
 
+  // HLS proxy endpoints
+  if (pathname === '/hls/master.m3u8' || pathname === '/hls/media.m3u8') {
+    return hlsProxy(request, response, url.searchParams, true);
+  }
+  if (pathname === '/hls/fetch') {
+    return hlsProxy(request, response, url.searchParams, false);
+  }
+
   if (pathname === '/manifest.json') {
     return sendJson(response, 200, {
       id: 'community.futbollibre', version: '1.1.0', name: 'Fútbol Libre', description: 'Canales deportivos y agenda de partidos',
@@ -272,11 +337,9 @@ async function router(request, response) {
   }
   if (pathname === '/catalog/tv/agenda.json') {
     const events = await getAgenda();
+    // Sin poster: se prioriza que el horario y el nombre del evento se lean claramente
     return sendJson(response, 200, {
-      metas: events.map((event, index) => meta(
-        `event:${index}`, 'tv', event.title,
-        event.image || localUrl(request, `/poster/${encodeURIComponent(event.title)}.svg`)
-      ))
+      metas: events.map((event, index) => meta(`event:${index}`, 'tv', event.title))
     });
   }
   const channelMatch = pathname.match(/^\/meta\/tv\/channel:(.+)\.json$/);
@@ -292,14 +355,19 @@ async function router(request, response) {
   if (eventMatch) {
     const event = (await getAgenda())[Number(eventMatch[1])];
     return sendJson(response, event ? 200 : 404, event ? {
-      meta: meta(`event:${eventMatch[1]}`, 'tv', event.title,
-        event.image || localUrl(request, `/poster/${encodeURIComponent(event.title)}.svg`))
+      meta: meta(`event:${eventMatch[1]}`, 'tv', event.title)
     } : { error: 'Evento no encontrado' });
   }
+  // Wraps a resolved stream through the local HLS proxy so any Stremio client can play it
+  function proxiedStream(resolved, name, title) {
+    const proxyUrl = `${localUrl(request, '/hls/master.m3u8')}?u=${encodeURIComponent(b64e(resolved.url))}&r=${encodeURIComponent(b64e(resolved.referer || ''))}`;
+    return { name, title, url: proxyUrl };
+  }
+
   const streamMatch = pathname.match(/^\/stream\/tv\/channel:(.+)\.json$/);
   if (streamMatch) {
     const resolved = await resolveStream(decodeURIComponent(streamMatch[1]));
-    return sendJson(response, resolved ? 200 : 404, { streams: resolved ? [{ name: 'Fútbol Libre', title: 'Reproducir', url: resolved.url, behaviorHints: { notWebReady: true }, headers: { Referer: resolved.referer, 'User-Agent': USER_AGENT } }] : [] });
+    return sendJson(response, resolved ? 200 : 404, { streams: resolved ? [proxiedStream(resolved, 'Fútbol Libre', 'Reproducir')] : [] });
   }
   const eventStreamMatch = pathname.match(/^\/stream\/tv\/event:(\d+)\.json$/);
   if (eventStreamMatch) {
@@ -308,7 +376,7 @@ async function router(request, response) {
     for (const option of event?.options || []) {
       try {
         const resolved = await resolveStream(option.url);
-        if (resolved) streams.push({ name: option.title, title: option.title, url: resolved.url, behaviorHints: { notWebReady: true }, headers: { Referer: resolved.referer, 'User-Agent': USER_AGENT } });
+        if (resolved) streams.push(proxiedStream(resolved, option.title, option.title));
       } catch (error) {
         log(`No se pudo resolver ${option.url}: ${error.message}`, true);
       }
