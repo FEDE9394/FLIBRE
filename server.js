@@ -238,10 +238,13 @@ async function imageDataUri(url) {
 
 // Poster for agenda events: text only - big hour + full event name
 function agendaPosterSvg(hour, eventName) {
-  const lines = wrapWords(eventName || 'Evento', 18, 7);
-  const startY = 430 - ((lines.length - 1) * 19);
+  // Up to 10 short lines so long names are never cut off
+  const lines = wrapWords(eventName || 'Evento', 15, 10);
+  const fontSize = lines.length > 7 ? 24 : 28;
+  const lineStep = fontSize + 8;
+  const startY = 420 - ((lines.length - 1) * lineStep / 2);
   const textElements = lines.map((line, index) =>
-    '<text x="200" y="' + (startY + index * 38) + '" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="bold" fill="#ffffff" text-anchor="middle">' + escapeXml(line) + '</text>'
+    '<text x="200" y="' + Math.round(startY + index * lineStep) + '" font-family="Arial, Helvetica, sans-serif" font-size="' + fontSize + '" font-weight="bold" fill="#ffffff" text-anchor="middle">' + escapeXml(line) + '</text>'
   ).join('');
   return '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" viewBox="0 0 400 600">' +
     '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#000000"/></linearGradient></defs>' +
@@ -359,8 +362,8 @@ async function router(request, response) {
     return sendPoster(response, 200, posterSvg(posterMatch[1]));
   }
 
-  // Agenda event poster: /agenda-poster/<index>.svg
-  const agendaPosterMatch = pathname.match(/^\/agenda-poster\/(\d+)\.svg$/i);
+  // Agenda event poster: /agenda-poster/<index>-<hash>.svg (hash busts Stremio's image cache)
+  const agendaPosterMatch = pathname.match(/^\/agenda-poster\/(\d+)(?:-([a-z0-9]+))?\.svg$/i);
   if (agendaPosterMatch) {
     const event = (await getAgenda())[Number(agendaPosterMatch[1])];
     if (!event) return sendPoster(response, 404, posterSvg('Evento no encontrado'));
@@ -379,7 +382,7 @@ async function router(request, response) {
 
   if (pathname === '/manifest.json') {
     return sendJson(response, 200, {
-      id: 'community.futbollibre', version: '1.1.0', name: 'Fútbol Libre', description: 'Canales deportivos y agenda de partidos',
+      id: 'community.futbollibre', version: '1.2.0', name: 'Fútbol Libre', description: 'Canales deportivos y agenda de partidos',
       logo: ICON_URL || undefined,
       resources: ['catalog', 'meta', 'stream'], types: ['tv', 'movie'], catalogs: [
         { type: 'tv', id: 'channels', name: 'Canales en vivo' }, { type: 'tv', id: 'agenda', name: 'Agenda de partidos' }
@@ -399,10 +402,12 @@ async function router(request, response) {
     const events = await getAgenda();
     // Poster informativo: logo de la competición + hora grande + nombre completo del evento
     return sendJson(response, 200, {
-      metas: events.map((event, index) => meta(
-        `event:${index}`, 'tv', event.title,
-        localUrl(request, `/agenda-poster/${index}.svg`)
-      ))
+      metas: events.map((event, index) => {
+        // Short hash of the title: changing content produces a new URL and bypasses image caches
+        const hash = Buffer.from(event.title, 'utf8').toString('base64url').replace(/[^a-z0-9]/gi, '').slice(0, 8).toLowerCase();
+        return meta(`event:${index}`, 'tv', event.title,
+          localUrl(request, `/agenda-poster/${index}-${hash}.svg`));
+      })
     });
   }
   const channelMatch = pathname.match(/^\/meta\/tv\/channel:(.+)\.json$/);
