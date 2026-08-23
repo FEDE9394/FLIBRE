@@ -1,9 +1,6 @@
 const http = require('node:http');
 const { URL } = require('node:url');
 const cheerio = require('cheerio');
-// Converts generated SVG posters to PNG (Android Stremio cannot render SVG)
-let sharp = null;
-try { sharp = require('sharp'); } catch { /* optional dependency */ }
 
 const BASE_URL = process.env.BASE_URL || 'https://futbollibre.ad/';
 const AGENDA_URL = process.env.AGENDA_URL || 'https://futbollibretv.org.pe/diaries.json?v=2.2';
@@ -41,6 +38,13 @@ async function cached(key, loader) {
 function absoluteUrl(value, base = BASE_URL) {
   if (!value) return '';
   try { return new URL(value, base).toString(); } catch { return ''; }
+}
+
+function placeholdPoster(title) {
+  const textoConSaltos = String(title ?? '')
+    .replace(/[\[\]]/g, '')
+    .replace(/ /g, '\n');
+  return `https://placehold.co/600x900@2x/0f172a/ffffff.png?text=${encodeURIComponent(textoConSaltos)}&font=montserrat`;
 }
 
 function parseChannels(html) {
@@ -169,102 +173,9 @@ async function resolveStream(channelUrl) {
   return stream ? { url: stream, referer: iframeUrl } : null;
 }
 
-// ---- Generated posters (SVG) for items without artwork ----
-
-const POSTER_COLORS = ['#1e3a8a', '#7c2d12', '#14532d', '#581c87', '#831843', '#0c4a6e', '#713f12', '#3f3f46'];
-
-const XML_ESCAPES = { 38: 'amp', 60: 'lt', 62: 'gt', 34: 'quot', 39: 'apos' };
-
-function normalizePosterText(text) {
-  return String(text ?? '')
-    .normalize('NFC')
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
-    .trim();
-}
-
-function escapeXml(text) {
-  return normalizePosterText(text).replace(/[&<>"']/g, char => '&' + XML_ESCAPES[char.charCodeAt(0)] + ';');
-}
-
-function wrapWords(title, maxCharsPerLine = 14, maxLines = 4) {
-  const words = normalizePosterText(title).split(/\s+/).filter(Boolean);
-  const lines = [];
-  let line = '';
-  for (const word of words) {
-    if ((line + ' ' + word).trim().length > maxCharsPerLine && line) {
-      lines.push(line.trim());
-      line = word;
-      if (lines.length === maxLines) break;
-    } else {
-      line = (line + ' ' + word).trim();
-    }
-  }
-  if (line && lines.length < maxLines) lines.push(line.trim());
-  if (lines.length === maxLines && words.join(' ').length > lines.join(' ').length) {
-    lines[maxLines - 1] = lines[maxLines - 1].slice(0, maxCharsPerLine - 1).trimEnd() + '...';
-  }
-  return lines;
-}
-
-function posterSvg(title) {
-  const clean = normalizePosterText(title || '?').replace(/^[[\]]|[\][]/g, '').trim();
-  const hash = [...clean].reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  const bg = POSTER_COLORS[hash % POSTER_COLORS.length];
-  const lines = wrapWords(clean.replace(/\s*:\s*/, ':\n').replace('\n', ' ') || '?');
-  const startY = 300 - ((lines.length - 1) * 30);
-  const textElements = lines.map((line, index) =>
-    `<text x="200" y="${startY + index * 60}" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="34" font-weight="bold" fill="#ffffff" text-anchor="middle">${escapeXml(line)}</text>`
-  ).join('');
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" viewBox="0 0 400 600" preserveAspectRatio="xMidYMid meet">
-  <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${bg}"/><stop offset="100%" stop-color="#000000"/></linearGradient></defs>
-  <rect width="400" height="600" fill="url(#g)"/>
-  ${textElements}
-</svg>`;
-}
-
-// Poster for agenda events: text only - big hour + full event name
-function agendaPosterSvg(hour, eventName) {
-  // Up to 10 short lines so long names are never cut off
-  const lines = wrapWords(eventName || 'Evento', 15, 10);
-  const fontSize = lines.length > 7 ? 24 : 28;
-  const lineStep = fontSize + 8;
-  const startY = 420 - ((lines.length - 1) * lineStep / 2);
-  const textElements = lines.map((line, index) =>
-    '<text x="200" y="' + Math.round(startY + index * lineStep) + '" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="' + fontSize + '" font-weight="bold" fill="#ffffff" text-anchor="middle">' + escapeXml(line) + '</text>'
-  ).join('');
-  return '<?xml version="1.0" encoding="UTF-8"?>' +
-    '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" viewBox="0 0 400 600" preserveAspectRatio="xMidYMid meet">' +
-    '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#000000"/></linearGradient></defs>' +
-    '<rect width="400" height="600" fill="url(#g)"/>' +
-    '<text x="200" y="150" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="88" font-weight="bold" fill="#fbbf24" text-anchor="middle">' + escapeXml(hour || '--:--') + '</text>' +
-    '<rect x="50" y="185" width="300" height="4" fill="#fbbf24" opacity="0.6"/>' +
-    textElements +
-    '</svg>';
-}
-
 function sendJson(response, status, body) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
   response.end(JSON.stringify(body));
-}
-
-function sendSvg(response, status, svg) {
-  response.writeHead(status, { 'Content-Type': 'image/svg+xml; charset=utf-8', 'Cache-Control': 'public, max-age=86400', 'Access-Control-Allow-Origin': '*' });
-  response.end(svg);
-}
-
-// Sends a poster as PNG when possible (better Android compatibility), SVG as fallback
-async function sendPoster(response, status, svg) {
-  if (sharp) {
-    try {
-      const png = await sharp(Buffer.from(svg), { density: 150 }).png().toBuffer();
-      response.writeHead(status, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400', 'Access-Control-Allow-Origin': '*' });
-      return response.end(png);
-    } catch (error) {
-      log('No se pudo convertir el poster a PNG: ' + error.message, true);
-    }
-  }
-  sendSvg(response, status, svg);
 }
 
 // ---- HLS proxy: makes remote streams playable directly by Stremio ----
@@ -331,109 +242,6 @@ function localUrl(request, path) {
   return `${proto}://${host}${path}`;
 }
 
-const TOURNAMENT_WORDS = /\b(?:liga|league|copa|cup|torneo|tournament|uefa|conmebol|fifa|grand\s+prix|premier|profesional|professional|champions|mundial|world|qualifiers?|clasificaci[oó]n|fecha|jornada|semifinal|final)\b/gi;
-
-function shortenParticipant(participant) {
-  const clean = participant.replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
-  if (clean.length <= 9) return clean;
-  const words = clean.split(' ').filter(Boolean);
-  if (words.length > 1) {
-    const acronym = words.map(word => word[0]).join('').toUpperCase();
-    if (acronym.length >= 2 && acronym.length <= 4) return acronym;
-  }
-  return clean.slice(0, 8).trimEnd() + '.';
-}
-
-function formatTitle(originalTitle, time = '') {
-  const original = String(originalTitle || '').replace(/^\[[^\]]+\]\s*/, '').trim();
-  const withoutTournament = original
-    .replace(TOURNAMENT_WORDS, '')
-    .replace(/[|,:]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const participants = withoutTournament.split(/\s+(?:vs\.?|v\.?|contra|at|@)\s+|\s+-\s+/i).map(shortenParticipant).filter(Boolean);
-  const match = participants.length >= 2 ? `${participants[0]} vs ${participants[1]}` : shortenParticipant(withoutTournament || original);
-  const clock = String(time || '').match(/\d{1,2}:\d{2}/)?.[0] || originalTitle.match(/^\[(\d{1,2}:\d{2})\]/)?.[1] || '';
-  const prefix = clock ? `[${clock}] ` : '';
-  const available = Math.max(1, 22 - prefix.length);
-  return `${prefix}${match}`.slice(0, prefix.length + available).trimEnd();
-}
-
-const DEFAULT_POSTER = 'https://placehold.co/400x600/0f172a/fbbf24/png?text=Futbol+Libre';
-const sportsDbPosterCache = new Map();
-const TEAM_SUFFIXES = /\b(?:fc|f\.c\.|club|s\.a\.d\.|sad|cf|c\.f\.)\b/gi;
-
-function cleanTeamName(value) {
-  return String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\([^)]*\)/g, ' ')
-    .replace(TEAM_SUFFIXES, ' ')
-    .replace(/[^a-z0-9 ]/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
-}
-
-function teamTokens(value) {
-  return new Set(cleanTeamName(value).split(' ').filter(token => token.length > 1));
-}
-
-function extractTeams(title) {
-  const withoutTime = String(title || '').replace(/^\[[^\]]+\]\s*/, '');
-  const withoutCompetition = withoutTime.replace(TOURNAMENT_WORDS, '').replace(/\s+/g, ' ').trim();
-  const match = withoutCompetition.match(/^.*?\s+(?:vs\.?|v\.?|contra|at|@)\s+(.+)$/i) ||
-    withoutCompetition.match(/^(.+?)\s+-\s+(.+)$/i);
-  if (!match) return [];
-  const separator = /\s+(?:vs\.?|v\.?|contra|at|@)\s+/i.test(withoutCompetition) ?
-    withoutCompetition.match(/\s+(?:vs\.?|v\.?|contra|at|@)\s+/i) : withoutCompetition.match(/\s+-\s+/i);
-  const teamA = withoutCompetition.slice(0, separator.index).replace(/^[^:]+:\s*/, '').trim();
-  return teamA && match[1] ? [teamA, match[1].trim()] : [];
-}
-
-function eventMatchScore(eventName, teamA, teamB) {
-  const eventTokens = teamTokens(eventName);
-  const expected = [...teamTokens(teamA), ...teamTokens(teamB)];
-  if (!expected.length) return 0;
-  const matched = expected.filter(token => [...eventTokens].some(candidate => candidate === token || candidate.includes(token) || token.includes(candidate)));
-  return matched.length / expected.length;
-}
-
-async function getEventPoster(teamA, teamB) {
-  const names = [teamA, teamB].map(cleanTeamName);
-  if (names.some(name => !name)) return DEFAULT_POSTER;
-  const cacheKey = names.sort().join('|');
-  if (sportsDbPosterCache.has(cacheKey)) return sportsDbPosterCache.get(cacheKey);
-
-  const lookup = (async () => {
-    try {
-      const query = encodeURIComponent(`${teamA}_vs_${teamB}`);
-      const response = await fetch(`https://www.thesportsdb.com/api/v1/json/123/searchevents.php?e=${query}`, {
-        signal: AbortSignal.timeout(8000),
-        headers: { Accept: 'application/json' }
-      });
-      if (!response.ok) return DEFAULT_POSTER;
-      const data = await response.json();
-      const events = Array.isArray(data.event) ? data.event : [];
-      const match = events
-        .map(event => ({ event, score: eventMatchScore(event.strEvent, teamA, teamB) }))
-        .filter(item => item.score >= 0.5)
-        .sort((a, b) => b.score - a.score)[0]?.event;
-      return match?.strPoster || match?.strThumb || '';
-    } catch {
-      return '';
-    }
-  })();
-  sportsDbPosterCache.set(cacheKey, lookup);
-  return (await lookup) || DEFAULT_POSTER;
-}
-
-async function getEventArtwork(event) {
-  const teams = extractTeams(event.title);
-  if (teams.length !== 2) return DEFAULT_POSTER;
-  return getEventPoster(teams[0], teams[1]);
-}
-
 function meta(id, type, name, description = '') {
   return { id, type, name, ...(description ? { description } : {}) };
 }
@@ -445,26 +253,6 @@ async function router(request, response) {
     pathname = decodeURIComponent(url.pathname);
   } catch {
     pathname = url.pathname;
-  }
-
-  // Generated poster endpoint: /poster/<title>.svg
-  const posterMatch = pathname.match(/^\/poster\/(.+)\.svg$/i);
-  if (posterMatch) {
-    return sendPoster(response, 200, posterSvg(posterMatch[1]));
-  }
-
-  // Agenda event poster: /agenda-poster/<index>-<hash>.svg (hash busts Stremio's image cache)
-  const agendaPosterMatch = pathname.match(/^\/agenda-poster\/(\d+)(?:-([a-z0-9]+))?\.svg$/i);
-  if (agendaPosterMatch) {
-    const event = (await getAgenda())[Number(agendaPosterMatch[1])];
-    if (!event) return sendPoster(response, 404, posterSvg('Evento no encontrado'));
-    const artwork = await getEventArtwork(event);
-    if (artwork !== DEFAULT_POSTER) {
-      response.writeHead(302, { Location: artwork, 'Cache-Control': 'public, max-age=86400' });
-      return response.end();
-    }
-    const eventName = event.title.replace(/^\[[^\]]+\]\s*/, '');
-    return sendPoster(response, 200, agendaPosterSvg(event.hour, eventName));
   }
 
   // HLS proxy endpoints
@@ -487,10 +275,11 @@ async function router(request, response) {
   if (pathname === '/catalog/tv/channels.json') {
     const channels = await getChannels();
     return sendJson(response, 200, {
-      metas: channels.map(channel => meta(
-        `channel:${encodeURIComponent(channel.url)}`, 'tv', channel.title,
-        channel.image || localUrl(request, `/poster/${encodeURIComponent(channel.title)}.svg`)
-      ))
+      metas: channels.map(channel => {
+        const item = meta(`channel:${encodeURIComponent(channel.url)}`, 'tv', channel.title);
+        item.poster = placeholdPoster(channel.title);
+        return item;
+      })
     });
   }
   if (pathname === '/catalog/tv/agenda.json') {
@@ -498,9 +287,7 @@ async function router(request, response) {
     return sendJson(response, 200, {
       metas: await Promise.all(events.map(async (event, index) => {
         const item = meta(`event:${index}`, 'tv', event.title, event.title);
-        const artwork = await getEventArtwork(event);
-        const hash = Buffer.from(event.title, 'utf8').toString('base64url').replace(/[^a-z0-9]/gi, '').slice(0, 8).toLowerCase();
-        item.poster = artwork === DEFAULT_POSTER ? localUrl(request, `/agenda-poster/${index}-${hash}.svg`) : artwork;
+        item.poster = placeholdPoster(event.title);
         return item;
       }))
     });
@@ -509,19 +296,17 @@ async function router(request, response) {
   if (channelMatch) {
     const channelUrl = decodeURIComponent(channelMatch[1]);
     const channel = (await getChannels()).find(item => item.url === channelUrl);
-    return sendJson(response, channel ? 200 : 404, channel ? {
-      meta: meta(`channel:${encodeURIComponent(channel.url)}`, 'tv', channel.title,
-        channel.image || localUrl(request, `/poster/${encodeURIComponent(channel.title)}.svg`))
-    } : { error: 'Canal no encontrado' });
+    if (!channel) return sendJson(response, 404, { error: 'Canal no encontrado' });
+    const channelMeta = meta(`channel:${encodeURIComponent(channel.url)}`, 'tv', channel.title);
+    channelMeta.poster = placeholdPoster(channel.title);
+    return sendJson(response, 200, { meta: channelMeta });
   }
   const eventMatch = pathname.match(/^\/meta\/tv\/event:(\d+)\.json$/);
   if (eventMatch) {
     const event = (await getAgenda())[Number(eventMatch[1])];
     if (!event) return sendJson(response, 404, { error: 'Evento no encontrado' });
     const eventMeta = meta(`event:${eventMatch[1]}`, 'tv', event.title, event.title);
-    const artwork = await getEventArtwork(event);
-    const hash = Buffer.from(event.title, 'utf8').toString('base64url').replace(/[^a-z0-9]/gi, '').slice(0, 8).toLowerCase();
-    eventMeta.poster = artwork === DEFAULT_POSTER ? localUrl(request, `/agenda-poster/${eventMatch[1]}-${hash}.svg`) : artwork;
+    eventMeta.poster = placeholdPoster(event.title);
     return sendJson(response, 200, { meta: eventMeta });
   }
   // Wraps a resolved stream through the local HLS proxy so any Stremio client can play it
